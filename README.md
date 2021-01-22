@@ -1,0 +1,2 @@
+# statdoc
+Statistics training documents
