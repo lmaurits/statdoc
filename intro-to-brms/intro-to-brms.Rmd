@@ -1,0 +1,702 @@
+---
+title: "An introduction to `brms` (under construction!)"
+author: "Luke Maurits <<luke_maurits@eva.mpg.de>>"
+date: "13/08/2021"
+output: pdf_document
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# An overview
+
+## What is `brms`?
+
+`brms` is an R-package for fitting a wide-range of Bayesian models.  It can fit
+generalised linear mixed models (e.g. logistic or probit regression for yes/no
+binary responses, gamma regressions for reaction times, or binomial, negative
+binomial or Poisson regressions for count responses) as well as ordinal response
+models (for Likert scale responses).  It can handle zero-inflation in count
+responses, and supports multiple strategies for dealing with missing data.  In
+short, it's a very flexible Bayesian modelling package with some advanced
+features, and might come close to being a "one stop shop" for most of your
+data analysis needs.
+
+## Powered by Stan
+
+Just like Richard McElreath's `ulam` function in his `rethinking` package,
+`brms` is powered under the hood by Stan.  Models are fit using Hamiltonian
+MCMC, so while `brms` offers some convenience functions for easily doing some
+common post-analysis work, what you ultimately get back when you fit a model is
+a large set of posterior samples for all your model parameters.  A lot of the
+theoretical concepts and practical guidelines (regarding MCMC convergence, etc.)
+that you might have picked up from the Rethinking course are directly and
+exactly applicable to `brms` too.
+
+## Familiar syntax
+
+If `ulam` and `brms` both just use Stan to do the heavy lifting, why would you
+use `brms` instead of `ulam`?  One of the main attractions for many people is
+that `brms` allows you to specify common models using exactly the same syntax
+that you'd use with the `glmer()` function from the `lme4` package, using the
+pipe symbol (`|`) to specify random effects.  In fact, you can often take a
+working `lme4` model and just change the function from `glmer()` to `brms`'s
+`brm()` and leave everything else exactly as is to switch from a frequentist to
+a Bayesian version of your model^[Of course, if that's *all* you do you'll be
+stuck using `brms`'s default prior distributions, which is not a good habit to
+get into, but it's nice to be at least be able to get started so quickly and
+easily].
+
+Of course, such convenience comes at a cost: `ulam`'s syntax is general enough
+to let you specify just about any model Stan can handle, which lets you easily
+write bespoke models for your problem, even models nobody has ever used before.
+The `lme4`-style syntax of `brms` is limited to a set of "off the shelf"
+solutions (although its shelf range is actually pretty impressive).  But the
+good news is that `brms` actually supports *two* model syntaxes - the compact,
+user-friendly `lme4`-style syntax that makes it quick and easy to setup typical
+analyses like GLMMs, and a second style (using `bf()` notation) which is more
+flexible (but still not quite as flexible `ulam`).  So, `brms` offers a low
+learning curve early on when you want to stick to tried and trued methods, but
+will let you go "off road" later on when you're ready.  For some people it
+might be all you'll ever need.  For others it might serve as a "gateway" to
+using Stan directly.
+
+# First steps
+
+## Meet the `brm()` function
+
+The heart and soul of `brms` is the function `brm()`^[I have no idea what this
+is supposed to stand for.  "Bayesian regression model"?  I haven't been able to
+find the answer anywhere, not in the official documentation, not in the output
+of `help(brm)`, not in the *Journal of Statistical Software* paper written by
+the package author announcing `brms` to the world, nowhere.].  This is the
+function you use to fit a model.  Unlike `lme4`, which uses `lmer()` for ordinary
+Guassian linear models and `glmer()` for generalised linear models (e.g. logistic
+or binomial regressions), `brms` uses this single function for all kinds of
+models.  You can even use `brm()` to fit *non*-linear models.  It's a single
+point of entry for all of the package's modelling capabilities.
+
+By design, the `brm()` looks very familiar to users who are used to `glm()` and
+`glmer()`.  The first three arguments it takes are `formula`, `data` and
+`family`, all of which work just like their counterparts in these more familiar
+functions.  The `family` argument takes a default value of `gaussian()`, so if
+you're just doing an ordinary linear model you can leave it out and just give
+your formula and the data.  Because of this design, as mentioned earlier, you
+can often do a bare-minimum conversion of a frequentist mixed effects model to
+a corresponding Bayesian one by taking an existing `lmer` or `glmer` function
+call and just changing it to `brm`.  Let's actually try this right now.
+
+## Converting an `lme4` logistic regression to `brms`
+
+For this example I'll use a dataset kindly donated by Manuel Bohn, from his
+open-access paper "[Children's interpretation of ambiguous pronouns based on
+prior discourse](https://doi.org/10.1111/desc.13049)".  All you need to know
+about the study to follow this tutorial is that children between the ages of
+2 and 5 played several rounds of a game where they had to figure out which of
+several possible objects an ambiguous pronoun "it" referred to.  The relevant
+parts of the data for this example are the columns:
+
+* `id` - participant identifier
+* `age_num` - participant age in years
+* `trial` - trial number
+* `target_category` - which category the correct object belonged to
+* `correct` - whether or not the child chose the correct object
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+data <- read_csv("../data/pronouns.csv") %>%
+	select(id, age_num, trial, target_category, correct)
+head(data)
+```
+
+Let's do a logistic regression on this dataset, using `correct` as the response
+variable.  There are repeated measurements on each participant, so we'll include
+random effects of `id` on all the predictor variables except age (this isn't a
+longitudinal study and we don't have data from any one participant at different
+ages, so it doesn't make sense to try to estimate per-individual age slopes -
+the model would be unidentifiable).
+
+First, in `lme4`, using `glmer` (`glmer` and not `lmer` because the fact that
+it's a logistic regression means it's a *g*eneralised linear model, and `glmer`
+not `glm` because we have *r*andom effects^[Why are they `lmer` and `glmer`
+instead of `lmr` and `glmr`?  What does that `e` stand for?  I'm sensing a theme here...]):
+
+```{r}
+library(lme4)
+freq_model <- glmer(correct ~ 1 + age_num + trial + target_category + (1 + trial | id),
+                    family=binomial(), data=data)
+summary(freq_model)
+```
+
+Now, the promise is that we can copy this line above and just change `glmer` to `brm` and
+it will work, and this is why `brms` is so quick and easy to pick up.  And this is *almost*
+true in this case.  I mean, it *does* work, honestly.  But there will be a warning.  This
+is because `brms` distinguishes
+between Bernoulli response variables (i.e. single coin tosses) and binomial response variables
+(i.e. counts of heads across multiple coin tosses).  The correct thing to do in `brms` would be
+to also change `family=binomial()` to `family=bernoulli()`, so we need to make one more tiny
+change beyond what was promised.  Again,
+it *will* work without this change, but `brms` will yell at you about it because it's not
+guaranteed this will always work into the indefinite future, and also because doing it the
+proper way can be more computationally efficient.  It's kind of a shame that
+this trivial little difference ruins the promise of super easy conversion, but since
+this kind of data (binomial response) is so very common in the department's work, I figured it
+was worth using this example anyway, instead of using a Normal response example (where it
+really truly would be as simple as changing `glmer` to `brm`!).  Anyway, let's get on with
+it...
+
+```{r, warning=FALSE, message=FALSE}
+library(brms)
+bayes_model <- brm(correct ~ 1 + age_num + trial + target_category + (1 + trial | id),
+                    family=binomial(), data=data)
+summary(bayes_model)
+```
+
+Yikes!  There was a lot of output there.  `brms` is not exactly super silent, but that's more
+of a problem here (i.e. inside an RMarkdown document) than it would be in real life^[Unless
+you've made lifestyle choices where RMarkdown *is* real life...].  You can ask it to be
+quieter, and from this point on I will - but I didn't want to do so above because I am clinging
+tenaciously to this promise that you can just copy and paste your `lme4` code and make only
+one tiny change, and I didn't want to do anything to obscure that fact.  So if you see a
+little additional cruft in all future `brm` calls, rest assured that all I'm trying to do is
+make this document neater, and make the "knitting" process run faster on my computer.  None
+of it affects the actual statistical model.
+
+Right, so we've fit two models to the same data, using different packages and almost exactly
+the same code.  It would be nice, at this point, to do a quick comparison of the results from
+the two models.  You *can* just look at the output of `summary` for each of them, which is
+printed above, but as you can see the 
+the results are formatted differently so it's not exactly an "at a glance"
+type of thing.  But the differences are superficial: this is the exact same model, just fit
+two different ways.  Every parameter in one has a corresponding evil twin in the other, so a
+pretty direct comparison is possible.
+
+We can use the `broom.mixed` package to nicely format the
+results of both models into a standardised data frame format for easy comparison,
+so let's do that^[we have to use `broom.mixed` and not the regular `broom`
+package because apparently people still think that mixed effects models
+are some kind of strange niche side thing that need their own special
+version of packages...].  Don't panic if you're not familiar with `broom` or some of the
+other stuff below, like `left_join` or the `dplyr` tools like `filter()` and `select()`,
+they are not part of `brms` and you don't have to use them, I'm just using them
+to give a nice and simple comparison between the two models with a minimum of
+fuss.
+
+```{r}
+library(broom.mixed)
+tidy_freq <- tidy(freq_model) %>% rename(freq_estimate=estimate)
+tidy_bayes <- tidy(bayes_model) %>% rename(bayes_estimate=estimate)
+tidy_freq %>%
+  left_join(tidy_bayes, by=c("effect", "term")) %>%
+  filter(effect=="fixed") %>%
+  select(term, freq_estimate, bayes_estimate) %>%
+  mutate(difference = abs(freq_estimate - bayes_estimate),
+         percentage_diff = 100* difference/freq_estimate )
+
+```
+As you can see, the estimates of the fixed effect coefficients are generally
+pretty close between the two models; the Bayesian coefficients are mostly within 10%,
+and always within 15%, of the frequentist coefficients.
+
+Hopefully this helps to convince you that we really are fitting basically the same model
+in both cases.  Aside from the small pain point about the difference between
+Bernoulli and binomial responses in the two packages, it really was as simple
+as changing `glmer` for `brm`.  In particular, we didn't have to change the model
+*formula* at all.  So if you're comfortable reading and writing the specification of
+mixed effect models in `lme4`, then you should be comfortable reading and writing them in
+`brms`, too.  Yay!
+
+## Intermission
+
+Of course, the story doesn't end there.  There's that whole "prior distributions" thing
+we haven't talked about yet, and we haven't touched postanalysis at all.  But before we
+carry this example on further to address those things, let's zoom out a little bit.
+
+### All the distributions of the rainbow
+
+We're doing a Bernoulli regression here, because we have an outcome variable that takes
+the values of "correct" or "incorrect", but `brms` can easily do other things too, and
+pretty much everything you'll see in this tutorial works the same for all kinds of response
+distributions (I'll try to point out where things are different).  So don't think that if
+you never work with this kind of data you're not going to learn anything by following along.
+Almost everything you're going to see here is pretty generally applicable.
+
+Specifying which kind of response distribution you want your model to use is *broadly*
+similar to `lme4`, in that `brm()` has `family` and `link` parameters, but not everything is
+100% the same so I'll do a quick overview here (probably the difference you're mostly likely
+to bump into is with binomial models, see below).  If you're not totally comfortable with
+the various things you can tweak in GLMMs, you might want to check out my tutorial on the
+basic concepts of GLMMs.  At the time of writing it doesn't exist yet, so you might need to
+gas up the Delorean, but please stay tuned...
+
+There are many possible values of `family` beyond those I list here, but these are the
+ones you are mostly likely to want/need to use:
+
+* `gaussian` (the default if you don't specify `family`, so you never *have* to write this)
+* `bernoulli`
+* `binomial`
+* `negbinomial`
+* `poisson`
+* `gamma`
+* `cumulative`
+
+That last one is exciting!  `lme4` can't do cumulative response models at all (to be fair,
+they technically aren't even GLMMs), and they are the only thing you should even be thinking
+about using for analysing Likert scale data (and sometimes even other things).  Sure,
+there are other packages which can, but it's very nice to have one tool which can do
+a broad range of things in the same way.
+
+Every family has its own default link function which `brms` will use if you don't tell
+it otherwise.  Generally speaking you shouldn't muck with link functions without a good
+reason, but for the sake of completeness, commonly used values of `link` are:
+
+* `identity`
+* `log`
+* `logistic`
+* `probit`
+
+If you're doing a binomial regression you need some way to tell `brms` how many trials
+took place, in addition to the number of successes.  In `lme4` you do this with `cbind`.
+In `brms`, you include this information in the model formula, after the response 
+variable and before the `~`.  The procedure is the same whether the number of trials is
+a fixed constant (say 10):
+
+```
+my_binom_model <- brms(successes | trials(10) ~ 1 + age + society, family=`binomial()`,
+                       data=my_data)
+```
+
+or whether you have the number of trials for each row in a separate column (say `n_trials`):
+
+```
+my_binom_model <- brms(successes | trials(n_trials) ~ 1 + age + society, family=`binomial()`,
+                       data=my_data)
+```
+
+### MCMC-related arguments
+
+So far we've seen almost all of the important arguments you can give `brm()` that
+relate to the actual statistical model itself: `formula`, `data`, `family` and `link`.
+There's one more left, `prior`, which we'll meet below.  But you also need to know a
+few other arguments related to running the MCMC chain(s) that `brms` uses to actually
+fit the statistical models.  Sometimes you'll be able to get away with leaving these
+at their defaults, but I'm going to introduce the basics here already because there's
+one in particular you're probably going to want to get used to using all the time, to
+speed things up.  No bones about it, Bayesian model fitting via MCMC is slower than
+getting point estimates via maximum likelihood, so you definitely want to speed things
+up wherever you can.
+
+These basic MCMC arguments are:
+
+* `chains` specifies the number of MCMC chains to use (default 4)
+* `iter` specifies how many iterations each chain should be (default 2000)
+* `cores` specifies how many CPU cores to spread the chains over (default 1)
+
+In particular, the default of a single core is a bit of a pain - it means that if you
+leave everything at the defaults,
+you'll run four chains, one at a time, one after the other.  By adding
+`cores=4` to your `brm()` call, you'll run all four chains simultaneously, one on
+each core (assuming your computer actually *has* at least four CPU cores, which it
+probably does, unless you have a relatively old computer - if you install the `parallel`
+R package, you can call `detectCores()` to see how many you have).  Quite naturally, this
+will speed the whole thing up by about a factor of four, which is certainly not to be
+sneezed at.
+
+If you have a fairly simple model and a small amount of not too noisy data, the default
+values of `chains` and `iter` might be fine.  If not, you might need to increase them.
+You'll see me do this in later examples.  I don't want to get too bogged down in how to
+optimise these here - I really just wanted to make sure you knew about the `cores` thing.
+See "Care and feeding of your Markov chain" in section 9.5 (2nd Ed) for details if
+you want them.  These options get fed straight to Stan, so they work exactly the
+same for any modelling package which is built on Stan, including `brms`, `rethinking`
+and others.
+
+The other arguments to `brm()` which you'll probably need to learn at least the
+basics of are those which control various details of the MCMC chains.  By
+fiddling with these you'll be able to influence how quickly your analysis runs
+and how reliable your results are.  This is very much like having to play around
+with things like `nAGQ` and `control` in `lme4` to deal with warnings about
+convergence.  Nobody likes having to fiddle with this kind of stuff, but as soon
+as you move away from dirt simple linear models you can fit with `lm` you have
+to deal with this kind of stuff, whether you're a Bayesian or not.
+
+Finally, just like `lme4`, there's a `control` argument with fiddling with
+scarier stuff.  Nobody likes fiddling with mysterious scary stuff, but it's the
+reality of fitting powerful models.  This is true whether you're a Bayesian or not.
+In `lme4` sometimes you have to fiddle with `nAGQ` or use `control` to change
+`optimizer` or whatever.  In `brms`, sometimes you'll have to use `control` to fiddle
+with `adapt_delta` or `max_treedepth` or whatever.  In general, `brms` (or rather,
+stan) does a very good job of telling you when you might need to change these things.
+
+Alright, back to our running example...
+
+## Specifying priors
+
+A Bayesian GLMM and a frequentist GLMM have exactly the same basic model structure.  They
+differ in how the parameter values are estimated, and it's kind of a big difference - the
+Bayesian version needs priors!  We need some way to tell `brms` which priors we
+want to use, so it should come as little surprise that the fourth argument to
+`brm()` is the `prior` argument.
+
+We didn't specify any priors at all at all in our minimal
+example above.  The analysis still ran, because just like you can leave `family`
+out and `brms` (or `lme4` for that matter) will default to a Gaussian GLMM, you
+can leave `prior` out to run with `brms`'s default priors.  This generally
+isn't a good idea, though, and it's much better to specify your own priors.
+
+The way you tell `brm` which priors you want to use is kind of odd, but if
+you're used to making your plots using the Tidyverse's `ggplot` tools you might
+just feel right at home.  In the same way that you build up a plot in `ggplot`
+by adding together the return values of a bunch of functions (something like
+`ggplot() + geom_point() + xlim() + ylim()`, for example), you specify all your
+priors to `brm` with a single argument by adding together the return values of
+a bunch of functions.  But whereas with `ggplot` you'd typically use a whole
+host of different functions to build up a plot, here you'll just use the one
+function, called `prior()`, over and over again, as many times as you need.
+
+Let's make this clear with an example.  We'll specify our own priors for the
+logistic regression we did above, starting off with just the intercept.  A good
+"go-to" prior for the intercept in a logistic regression is a Normal distribution
+centered on 0 with a standard deviation of 1.5.  This prior puts 95% of its
+probability mass between -3.0 and 3.0.  When the logistic function is used to
+map the linear predictor value to the probability scale, this corresponds to
+probabilities between 0.05 and 0.95 (well, 0.047 and 0.0953, but close enough).
+Probabilities outside this range are close to "never" or "always", so are pretty
+strong positions, and it makes sense to have them receive quite low prior
+probabilities.  You can see section 11.1 of Rethinking (2nd Ed) for more of a
+discussion about priors for logistic regressions if this is unfamiliar for you.
+
+```{r, warning=FALSE, message=FALSE}
+bayes_model_2 <- brm(correct ~ 1 + age_num + trial + target_category + (1 + trial | id),
+                    prior = prior(normal(0,1.5), class="Intercept"),
+                    family=binomial(), data=data, silent=2, refresh=0,
+                    cores=4)
+summary(bayes_model_2)
+```
+
+All we had to do was add the `prior = prior(normal(0,1.5), class="Intercept")` part.
+The first argument to the `prior()` function specifies a distribution, in this case
+a Normal with mean of 0 and standard deviation of 1.5 as discussed above.  There's
+also a `class` argument, which tells `brms` which model parameter(s) this prior
+should apply to.  This time we used `class="Intercept"` to set a prior on the
+intercept.
+
+Did this make much of a difference to the model fit?  Let's do the same kind of
+comparison we did earlier between the frequentist and Bayesian models, but this
+time for the two Bayesian models with different priors.  We'll be doing this a
+lot throughout this tutorial, so let's save ourselves some time by wrapping the
+comparison up in a function:
+
+```{r, warning=FALSE}
+quick_comparison <- function(m1, m2) {
+  tidy_1 <- tidy(m1) %>% rename("model_1_estimate" = estimate)
+  tidy_2 <- tidy(m2) %>% rename("model_2_estimate" = estimate)
+  tidy_1 %>%
+    left_join(tidy_2, by=c("effect", "term")) %>%
+    filter(effect=="fixed") %>%
+    select(term, "model_1_estimate", "model_2_estimate") %>%
+    mutate(difference = abs(model_1_estimate - model_2_estimate),
+          percentage_diff = 100* difference/abs(model_1_estimate))
+}
+
+quick_comparison(bayes_model, bayes_model_2)
+```
+This made very little difference, it turns out.
+
+Let's try adding priors to some other model parameters:
+
+```{r, warning=FALSE, message=FALSE}
+bayes_model_3 <- brm(correct ~ 1 + age_num + trial + target_category + (1 + trial | id),
+                    prior = prior(normal(0,1.5), class="Intercept") +
+                            prior(normal(0,0.75), class="b"),
+                    family=binomial(), data=data, silent=2, refresh=0,
+                    cores=4)
+```
+
+Notice how now we've called `prior()` twice, and added the results together, passing
+their sum as the `prior` argument (it's kind of confusing that the argument to
+`brm()` and the function we use to generate the argument's value both have the
+same name!).  This is how you specify your priors in general: you can add together
+as many or as few calls to `prior()` as you need.
+
+In our second call to `prior()`, we've changed `class="Intercept"` to `class="b"`.
+Somewhat confusingly, this is the terminology `brms` uses to refer to the priors
+on slopes.  With a single call like this, all the slopes get the same prior, so
+we've put a tighter normal prior on the slopes of age, trial and the three dummy
+variables used to represent the four different levels of `target_category`.
+
+This time, our change in the prior has a more dramatic impact on the parameter
+estimates!  Let's compare this third model to the first Bayesian model, with
+`brms`'s default priors:
+
+```{r, warning=FALSE}
+quick_comparison(bayes_model, bayes_model_3)
+```
+Some of the estimates have now decreased by almost 50%!  Changing the prior on
+the slopes changed not only the slope estimates, but also the intercept estimate.
+This makes sense: if we do not allow the model to postulate a strong effect of
+`target_category`, then the intercept has to be adjusted to be closer to
+the overall mean in order to fit the data.
+
+---
+#What if we don't want to set the same prior for all the slopes in our model?
+#By providing `prior()` with a `coef` argument in addition to `class="b"`, we can
+#specify individual slope parameters.  Suppose we want to restrict the slope of
+#`age_num` to positive values only, because we don't believe it's plausible that
+#children get worse at this task as they get older (and therefore any apparent
+#trend in that direction in the data should either be explained some other way,
+#e.g. via using the per-participant random intercepts, or simply attributed to
+#"bad luck").  We can do this by adding a third call to `prior()`, using
+#`coef="age_num"` to specify we want it to apply only to the age slope, and
+#choosing a prior distribution which does not allow negative values - say, an exponential:
+#
+#```{r}
+#bayes_model_4 <- brm(correct ~ 1 + age_num + trial + target_category + (1 + trial | id),
+#                    prior = prior(normal(0,1.5), class="Intercept") +
+#                            prior(normal(0,0.75), class="b") +
+#                            prior(exponential(10), class="b", coef="age_num", lb=0),
+#                    family=binomial(), data=data, cores=4, iter=5000,
+#		    control=list(adapt_delta=0.95))
+#quick_comparison(bayes_model_3, bayes_model_4)
+#```
+#
+#This doesn't make an awful lot of difference because there's not much evidence
+#of a negative age slope in this data anyway.  It was just a nice example of a
+#situation where you might want to put a specific prior on an individual slope
+#parameter (I'm really more focussed here and now on showing you mechanically how to specify priors to `brms`, rather than picking the best possible priors.  Hopefully the tutorial will evolve in the direction of doing both over time, but first things first...).
+---
+
+# Post-analysis
+
+"Okay, I've used `brm()` to fit a model.  I even avoided the default priors!
+Now what?".
+
+As we've seen in examples above, you can pass the fitted model object that gets
+returned by a call to `brm()` to the familiar `summary()` function to see some
+basic details about the results of the fitting.  Obviously there's a lot more
+that you can, and should, do with a fitted model than this.  `brms` comes with
+a number of additional functions to perform common post-analysis tasks, and
+we'll meet some of them in this section.  But first, it's important to
+recognise that we don't *need* to rely on any of these pre-provided tools,
+because it's quite easy to get direct access to *all* the posterior samples from
+the MCMC chain.  Once you have those, as long as you understand your chosen
+model's generative process you have everything you need to answer any other
+statistical question yourself.  That's not to say that you shouldn't use the
+pre-existing tools if they do what you want, but it's always good to know how
+to take matters into your own hands.  Nobody understands your research questions
+better than you do!
+
+## Direct access to the posterior samples with `posterior_samples()`
+
+You can use `posterior_samples()` to get, well, all of the posterior samples
+drawn by the MCMC chain while fitting your model.  Note that this can be quite a
+large object.  There will be one row per sample taken - all the chains will
+be combined, so for the default settings of `brm()` (which are for four chains
+and 1000 non-warmup samples) we're talking 4,000 rows.  And there will be one
+column for each model parameter - including for each level of each random
+effect, so e.g. including per-participant random intercepts and random slopes to
+account for repeated measures could easily add hundreds of columns.  For large
+datasets and complicated models where you need to run long chains to get good
+ESS values, you could easily end up with millions of values.  Absolutely
+everything you could possibly want to know about your model can be found by
+wrangling with this huge table of values - as a quick and easy demonstration of
+this, try passing what you get get back from `posterior_samples()` to R's
+built-in `colMeans()` function.  You should end up seeing exactly the same
+posterior mean values as you see when you run `summary()` on the model object.
+Using the `colQuantiles` function from the `matrixStats` package you can also
+get Highest Posterior Density intervals (`colMeans` is fussy about its input
+and will demand a `matrix`, rejecting a `data.frame` or `tibble`, so use
+`as.matrix()` on the output of `posterior_samples()`.  Using
+`probs=c(0.025, 0.975)` will get you back the same 95% HPD intervals that you
+see in the output of `summary()`, but you can also use this to get 80%, 90% or
+whatever other interval you'd like.
+
+You can use the raw samples to do more than just get slightly tweaked
+versions of the output of `summary()`, though!  For example, our summary of this model
+suggests that children are more likely to give a correct answer for stimuli in
+the "fruits" category than the "mammals" category, but there is some overlap in
+their 95% HPD intervals.  We can use the raw samples to get a straightforward
+answer to the question "how sure are we that performance on fruits is higher
+than on mammals?".  All we need to do is figure out the proportion of our
+4,000 posterior samples where the fruit coefficient is higher than the mammal
+coefficient:
+
+```{r}
+samples <- posterior_samples(bayes_model)
+fruits <- samples$b_target_categoryfruits
+mammals <- samples$b_target_categorymammals
+posterior_fruits_higher_mammals <- sum(fruits > mammals) / length(fruits)
+posterior_fruits_higher_mammals
+```
+
+This reveals a very high posterior probability of `r posterior_fruits_higher_mammals`
+that the rate of correct answers is higher for for fruits than mammals.  All or
+almost all of the posterior samples where the mammal coefficient is near the
+higher end of its 95% HPD interval are also samples where the fruit
+coefficient is also at its higher end.  It *could* be otherwise and the
+summary output alone isn't enough to tell.
+
+## Prediction with `posterior_predict()` and friends
+
+Once you've fit a model - i.e. computed posterior distributions for all its
+parameters - you can use `posterior_predict()` to interrogate the model for its
+predictions about any arbitrary set of data points.  By default, you'll get back
+the model's predictions for the same explanatory variable values you fed it to
+fit the model.  This is useful for doing posterior predictive checks (above and
+beyond what you can do with `pp_check()`, which we'll see later), 
+
+But
+`posterior_predict()` is even more powerful when you feed it new data sets.  In
+fact, for models using non-linear link functions (i.e. for all Bernoulli, Beta,
+Binomial and Poisson models), plotting the output of a call to
+`posterior_predict()` is about the only way to really get a handle on just what
+your model's predictions are.  Simply looking at the table of coefficient
+estimates provided by `summary` is inadequate, as the non-linear link function
+means that any given fixed change in a predictor variable will have a varying
+effect on the response variable.  Furthermore, if you have multiple predictor
+variables in a model with a non-linear link, then in some sense each of your
+predictors interacts with every other predictor, even if you didn't "ask them
+to" by including `*` or `:` terms in your formula (you can find some discussion
+of all this in section 10.2.2 of the second edition of Statistical Rethinking
+if you're scratching your head right now).  The solution to all of this is to
+plot your model's predictions for the various value ranges of your predictor
+variables that you're interested in, and `posterior_predict()` can be used for
+this.
+
+To get predictions for arbitrary values of your predictors, all you need to do
+is build a new data frame with the same columns as your actual data, but with
+whatever rows you fancy, and pass this new data frame to `posterior_predict()`
+as the `newdata` parameter.  You don't need to create this new data frame
+manually (though of course you can if you want to) - there's a very handy
+function in base R called `expand.grid()`, and a slightly improved but mostly
+equivalent version in the Tidyverse called `expand_grid()`, which will generate
+a data frame (or tibble) containing all possible combinations of the vectors
+you provide as arguments, and this is *perfect* for creating values of
+`newdata`.  Let's look at a concrete example using the data from earlier.
+
+### Plotting posterior mean predictions
+
+The variables which we used as part of `bayes_model` above were `correct` (the
+outcome variable), `age_num`, `trial` and `target_category` (fixed effects) and
+`id` (the grouping variable for random intercepts and random slopes of trial).
+Lets try creating a tibble full of values for these variables.  We'll allow the
+value of `age_num` to range from 2 years to 5 years in steps of 0.1 years.
+We'll keep the value of trial fixed at 4, i.e. we will visualise the model's
+predictions for performance in the final trial (we'll talk more about how to
+avoid arbitrary conditions like this later).  We will include all the target
+categorie.  Just for now we will keep `id` fixed at one particular value (chosen
+at random).  Again, we'll talk later about avoiding this kind of thing.  For
+now I just want to demonstrate how to get and use predictions.
+
+First, we'll use `expand_grid` to prepare the new dataframe:
+
+```{r}
+newdata <- expand_grid(age_num=seq(2, 5, 0.1),
+		       trial=4,
+		       target_category=unique(data$target_category),
+		       id=sample(data$id, 1))
+nrow(newdata)
+```
+
+Note that it has 124 rows - 4 lots (corresponding to the four target
+categories) of 31, where 31 is the number of 0.1 year age values between 2 and
+5 inclusive.
+
+Next, we'll get predictions for this new data:
+
+```{r}
+predictions <- posterior_predict(bayes_model, newdata=newdata)
+dim(predictions)
+```
+
+What we get back from `posterior_predict` is a dataframe with 4,000 rows and
+124 columns.  The 124 columns correspond to the 124 rows of `newdata`, while
+the 4,000 rows correspond to the 4,000 posterior samples from our MCMC chain.
+That's a bit too big to just look at, so let's peek at the first 5 rows and
+the first 5 columns:
+
+```{r}
+predictions[1:5,1:5]
+```
+
+As you can see, each element of the dataframe is either a 0 or a 1, corresponding to the fact
+that this is a binomial model with only 1 trial (aka a Bernoulli model).
+`posterior_predict` has actually sampled from the response distribution, i.e.
+done a bunch of weighted coin-tossing, to produce what is basically a complete simulated experiment based on the variable
+values in `newdata`.
+
+That's neat, but in fact we're probably more interested in getting a
+*probability* for each row of `newdata`, rather than a 0 or a 1.  Thankfully,
+there's a `posterior_linpred` function which is basically the same as
+`posterior_predict` but it returns only the values of the model's linear
+predictor, ignoring the link function and the outcome distribution, and we can
+use this (together with `plogis`, which computes the logistic mapping from
+linear predictors to probability values between 0 and 1) to get what we want:
+
+```{r}
+predictions <- plogis(posterior_linpred(bayes_model, newdata=newdata))
+predictions[1:5,1:5]
+```
+
+That's better!  Now we have the probabilities we're interested in.  If we were
+using some other response distribution we might be happier using the output of
+just `posterior_predict`, in which case we wouldn't have to worry about this.
+But it's good that you see the above, because Bernoulli and binomial distributions
+are pretty common in our field.
+
+Let's add these probabilities to the
+`newdata` dataframe so it's easier to match them up against the predictor
+variables.  We'll start out using just the posterior mean probabilities -
+that's the mean over each column:
+
+```{r}
+newdata$prob <- colMeans(predictions)
+newdata %>%
+	filter(target_category=="fruits") %>%
+	select(age_num, prob)
+```
+
+Here you can see the model predicts children becoming more likely to give the
+correct response to fruit stimuli as their age increases from 2 to 5.  Let's
+visualise this, as well as the predictions for other categories:
+
+```{r}
+ggplot(newdata) +
+	geom_line(aes(x=age_num, y=prob, colour=target_category))
+```
+
+### Visualising uncertainty
+
+So far, so good, but we can do better.  The plot produced above uses only
+the posterior mean estimates of our model parameters, but one of the nice
+things about Bayesian inference is that we don't get single point estimates
+of model parameters but an entire posterior distribution representing our
+principled uncertainty about those parameters.  Let's bring those into the
+plot by including 95% posterior prediction intervals.  The `matrixStats`
+library contains a `colQuantiles()` function, which we can use to get upper
+and lower prediction bounds:
+
+```{r}
+library(matrixStats)
+newdata$mean_prediction <- colMeans(predictions)
+newdata$lower_prediction <- colQuantiles(predictions, probs=0.025)
+newdata$upper_prediction <- colQuantiles(predictions, probs=0.975)
+ggplot(newdata) +
+	geom_line(aes(x=age_num, y=mean_prediction, colour=target_category)) +
+	geom_ribbon(aes(x=age_num, ymin=lower_prediction, ymax=upper_prediction,
+			fill=target_category), alpha=0.15)
+```
+
+The prediction intervals here are quite wide and overlap substantially,
+which doesn't make for a very pretty figure, but this at least demonstrates
+how to fold this information into your plots.
+
+## Dude, where're my p-values?
+
+TODO
+
+## Model comparison / selection
+
+TODO
