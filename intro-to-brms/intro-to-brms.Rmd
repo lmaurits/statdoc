@@ -332,6 +332,140 @@ stan) does a very good job of telling you when you might need to change these th
 
 Alright, back to our running example...
 
+## Dancing on tables, gazing at stars
+
+*Maybe* you're expecting, or hoping, at this point for a bit of an explanation on how
+to actually interpret the output of `summary(bayes_model)`, and how it's different
+from the summary tables you might be more used to looking at from the output of
+`lme4` models, or just the base-R modelling functions like `lme()`.  And, well,
+I *will* say something about it, because I strongly suspect that if I don't do so soon
+you'll run off and Google it, and who knows what you'll find doing that.  But first
+I want to push back a little bit against the idea that there is an awful lot you can
+learn by fitting a single model to some data and then looking at a table of numbers
+that comes out of it.  I know this is how everybody does it, I know that people put
+those tables of numbers right in their papers as if they were important, but that
+doesn't mean it's a great idea.
+
+Generally speaking, there are two things people hope to get out of looking at summary
+tables: one, some kind of understanding of what their model thinks the effect of various
+variables are, by looking at coeffifcient estimates and thinking things like "Okay,
+ever extra year of age increases expected height by 15cm" or something like that.  And
+two, some idea of which variables "matter", probably by engaging in what Richard
+McElreath calls "star-gazing", looking at p-values / significance ratings and assuming
+that variables with lots of `*`s next to them make a big difference to model predictions
+and ones without them don't matter at all.
+
+### Predictions are more important than coefficients
+
+This first practice, of looking at the actual numerical values of predictors and trying
+to understand their implications, does not work well for GLMMs in general.  You can
+get away with it in *some* cases - namely, cases where your model uses an identity
+link function, which practically speaking means models with a Normal response.  In all
+other cases, including Bernoulli/logistic regressions like our example here, binomial
+regressions and Poisson regressions, this doesn't work.  The use of a non-identity
+link function means that a fixed change in the value of some predictor variable, like
+one extra year of age, or a contrast between two levels of a variable, like male vs
+female experimental participants, or participants from a WEIRD society and those from
+a hunter-gatherer society, *does not* have a corresponding fixed change on the outcome.
+This can seem scary, but in the case of logistic regressions at least it should also
+make perfect sense:  it's impossible that, say, every extra year of age increases the
+probability that a child successfully completes a Sally-Anne false belief test by 0.10,
+otherwise children older than 10 would necessarily have probabilities above 1.0, which
+makes no sense.  So going from three years of age to four years of age and from four
+to five necessarily have different effects on the probability.  It gets even worse if
+you have multiple explanatory variables in there: then even the effect of going from
+three to four depends upon the value of other variables.  It doesn't matter how smart
+you are or how much experience you have, you can't just look at the individual
+parameter values and then figure all of this out in your head.  The only way to get a
+handle on what your model predicts is to stop focussing on its parameter values and
+look at, surprise, its predictions.  You can do this with plots, and I'll show you
+how to generate these plots in `brms` later in this tutorial.  If you really want a
+big table full of numbers because it looks more Sciency, you can use a table of
+model predictions for certain values of the explanatory variables.   This might look
+unconventional, but its a lot more informative about what the model is actually saying
+than a table of parameter values.
+
+### Which variables "matter"?
+
+The second practice, of looking at summary tables to decide which variables are
+important to your model and which ones aren't, is problematic as well.  It's doubly
+problematic with frequentist model summaries with p-values in them, because, quoting
+the "Rethinking: Stargazing" box from the end of section 7.0 of Rethinking (2nd Ed):
+"p-values are not designed to help you nagivage between underfitting and overfitting",
+and "predictor variables that impreove prediction are not always statistically
+significant.  It is also possible for variables that are statistically significant to
+do nothing useful for prediction".  In the case of `brms`, there *are* no p-values
+to misinterpret.  But the point remains in both cases that the best way to know if a
+variable "matters" is to compare a model with the variable to one without it.  I'll
+show you how to do model comparisons within `brms` later in this tutorial, too, and I
+think that should be your "gold standard".  That said, you *can* get some idea of
+whether or not a variable might matter by looking at a summary table, so let's talk
+about that.
+
+### Checking credibility intervals for zero
+
+Our `lme4` model and `brms` model are the same model: given a set of parameter values,
+they both assign the same likelihood to our data, or any other given data set.  The
+big difference is not in the models themselves but in how we fit them.  `lme4` gives
+us point estimates for each parameter, obtained by maximising the likelihood of the
+data.  `brms` gives a posterior distribution for each parameter, by balancing consistency
+with with the data gainst prior probabilities.
+
+Posterior distributions have a lot of information in them, so what you see in the
+output of `summary(bayes_model)` is, well, just a summary.  What look like point
+estimates in the summary (the column title `Estimate`) are actually the means of the
+posterior distribution.  The `l-95% CI` and `u-95% CI` columns try to give you some
+idea of how concentrated or spread out the posterior distribution is around the mean;
+they are the lower and upper endpoints, respectively, of a so-called *credibility
+interval*^[You are "supposed to" talk about confidence intervals in a frequentist
+context and credibility intervals in Bayesian contexts, but people tend to be sloppy
+about this - the fact that both abbreviate to CI doesn't help.  Richard doesn't like
+"credibility" and advocates for "compatibility intervals" in Bayesian contexts, for
+yet a third meaning of CI.].  This is kind of, sort of, like a more familiar confidence
+interval, although the definition and interpretation is quite different.  Now is not
+the time to get into details: you can safely interpet these along the lines of "the
+model is 95% sure that the true value of this parameter is between these two bounds".
+
+In light of this, it's very common to check whether or not this interval for each
+parameter includes zero, and declare that if it doesn't, then the corresponding
+variable "matters".  For example, in our case the CI for `target_categoryfruits` says
+the model is 95% sure that this parameter is between
+`r fixef(bayes_model)["target_categoryfruits, 3]`
+and
+`r fixef(bayes_model)["target_categoryfruits, 4]`.
+In other words, the model is 95% sure that paremter is greater than zero, i.e. there
+is a real difference between performance on questions where the correct answer is a
+fruit compared to the reference category, where the correct answer is an item of
+clothing.  In contrast, the model is 95% sure that the coefficient for trial number 
+is between
+`r fixef(bayes_model)["trial, 3]`
+and
+`r fixef(bayes_model)["trial, 4]`, which *does* include zero, so we can't rule out
+that there is no trial effect here.
+
+This approach to interpreting the result of fitting a model is fairly quick and easy
+and feels very intuitive.  In fact, it's basically the way a lot of people incorrectly
+think about p-values.  So it tends to be popular.  But it also has a few drawbacks in
+common with checking for statistical significance of coefficients in a frequentist
+model.  For one thing, the use of a 95% CI is arbitrary.  In this model, the coefficient
+of age has zero in its 95% CI, but *not* in its 90% CI (I'll show you how to compute
+arbitrary width CIs later).  Which one do we want to believe.  And in either case,
+just because a coefficient is almost certainly not zero, doesn't mean it really matters.
+The effect might be real, but small.  And as we discussed above, because there is some
+link function acting as a go-between your linear predictor values and the parameters of
+your response distribution, you can't tell if an effect is small just by looking at the
+posterior mean value and trusting your gut.  So, there's definitely better ways to go
+about it.  However, the approach of checking 95% CIs for zero is widely used and is not
+bad as a rule of thumb.  It's also *very* broadly applicable.  You're not limited to
+applying it to posterior distributions of model parameters, you can also apply it to
+posterior distributions of *differences* between parameters, and even differences in
+model predictions between conditions.  This lets you do very useful and interesting
+stuff that's just not possible outside of a Bayesian setting.  We'll see examples of
+this kind of thing later!
+
+So, with that said: onwards and upwards to extracting predictions from a model and
+doing model comparison!  But first, sorry, we really do need to talk about priors...
+
 ## Specifying priors
 
 A Bayesian GLMM and a frequentist GLMM have exactly the same basic model structure.  They
@@ -476,7 +610,9 @@ Now what?".
 As we've seen in examples above, you can pass the fitted model object that gets
 returned by a call to `brm()` to the familiar `summary()` function to see some
 basic details about the results of the fitting.  Obviously there's a lot more
-that you can, and should, do with a fitted model than this.  `brms` comes with
+that you can, and should, do with a fitted model than this.  We've already
+discussed the limitations of looking at a summary table and calling it a day.
+`brms` comes with
 a number of additional functions to perform common post-analysis tasks, and
 we'll meet some of them in this section.  But first, it's important to
 recognise that we don't *need* to rely on any of these pre-provided tools,
@@ -484,9 +620,12 @@ because it's quite easy to get direct access to *all* the posterior samples from
 the MCMC chain.  Once you have those, as long as you understand your chosen
 model's generative process you have everything you need to answer any other
 statistical question yourself.  That's not to say that you shouldn't use the
-pre-existing tools if they do what you want, but it's always good to know how
-to take matters into your own hands.  Nobody understands your research questions
-better than you do!
+pre-existing tools if they do what you want.  There's no point in reinventing
+the wheel.  But it's always good to know how to take matters into your own hands
+if you need to.  Nobody understands your research questions better than you do,
+and Bayesian inference gives you the freedom to ask all kinds of questions in a
+rigorous way.  Taking full advantage of this freedom can sometimes mean thinking
+outside the box/package.
 
 ## Direct access to the posterior samples with `posterior_samples()`
 
