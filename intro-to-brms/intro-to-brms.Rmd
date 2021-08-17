@@ -430,17 +430,17 @@ In light of this, it's very common to check whether or not this interval for eac
 parameter includes zero, and declare that if it doesn't, then the corresponding
 variable "matters".  For example, in our case the CI for `target_categoryfruits` says
 the model is 95% sure that this parameter is between
-`r fixef(bayes_model)["target_categoryfruits, 3]`
+`r fixef(bayes_model)["target_categoryfruits", 3]`
 and
-`r fixef(bayes_model)["target_categoryfruits, 4]`.
+`r fixef(bayes_model)["target_categoryfruits", 4]`.
 In other words, the model is 95% sure that paremter is greater than zero, i.e. there
 is a real difference between performance on questions where the correct answer is a
 fruit compared to the reference category, where the correct answer is an item of
 clothing.  In contrast, the model is 95% sure that the coefficient for trial number 
 is between
-`r fixef(bayes_model)["trial, 3]`
+`r fixef(bayes_model)["trial", 3]`
 and
-`r fixef(bayes_model)["trial, 4]`, which *does* include zero, so we can't rule out
+`r fixef(bayes_model)["trial", 4]`, which *does* include zero, so we can't rule out
 that there is no trial effect here.
 
 This approach to interpreting the result of fitting a model is fairly quick and easy
