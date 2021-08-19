@@ -2,7 +2,9 @@
 title: "An introduction to `brms` (under construction!)"
 author: "Luke Maurits <<luke_maurits@eva.mpg.de>>"
 date: "13/08/2021"
-output: pdf_document
+output:
+  pdf_document:
+    number_sections: TRUE
 urlcolor: blue
 ---
 
