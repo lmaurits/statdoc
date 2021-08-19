@@ -426,7 +426,9 @@ about this - the fact that both abbreviate to CI doesn't help.  Richard doesn't 
 yet a third meaning of CI.].  This is kind of, sort of, like a more familiar confidence
 interval, although the definition and interpretation is quite different.  Now is not
 the time to get into details: you can safely interpet these along the lines of "the
-model is 95% sure that the true value of this parameter is between these two bounds".
+model is 95% sure that the true value of this parameter is between these two bounds"
+(though not necessarily *right inbetween*, i.e. the midpoint is not special.
+Posterior distributions can be asymmetric).
 
 In light of this, it's very common to check whether or not this interval for each
 parameter includes zero, and declare that if it doesn't, then the corresponding
@@ -447,26 +449,83 @@ that there is no trial effect here.
 
 This approach to interpreting the result of fitting a model is fairly quick and easy
 and feels very intuitive.  In fact, it's basically the way a lot of people incorrectly
-think about p-values.  So it tends to be popular.  But it also has a few drawbacks in
-common with checking for statistical significance of coefficients in a frequentist
-model.  For one thing, the use of a 95% CI is arbitrary.  In this model, the coefficient
-of age has zero in its 95% CI, but *not* in its 90% CI (I'll show you how to compute
-arbitrary width CIs later).  Which one do we want to believe.  And in either case,
-just because a coefficient is almost certainly not zero, doesn't mean it really matters.
-The effect might be real, but small.  And as we discussed above, because there is some
-link function acting as a go-between your linear predictor values and the parameters of
-your response distribution, you can't tell if an effect is small just by looking at the
-posterior mean value and trusting your gut.  So, there's definitely better ways to go
-about it.  However, the approach of checking 95% CIs for zero is widely used and is not
-bad as a rule of thumb.  It's also *very* broadly applicable.  You're not limited to
-applying it to posterior distributions of model parameters, you can also apply it to
-posterior distributions of *differences* between parameters, and even differences in
-model predictions between conditions.  This lets you do very useful and interesting
-stuff that's just not possible outside of a Bayesian setting.  We'll see examples of
-this kind of thing later!
+think about p-values, but in this case it's actually a correct way of thinking, and
+you don't have to worry about multiple comparison and other gotchas of null hypothesis
+significance testing.  It's what you've wanted stats to be all along!  So it tends to
+be popular.  But while it avoids some of the interpretational difficulties of assigning
+p-values to coefficients, it still has plenty of other drawbacks in common with that
+approach.
 
-So, with that said: onwards and upwards to extracting predictions from a model and
-doing model comparison!  But first, sorry, we really do need to talk about priors...
+For one thing, the use of a 95% CI is still arbitrary.  In this model, the coefficient
+of age has zero in its 95% CI, but *not* in its 90% CI (I'll show you how to compute
+arbitrary width CIs later).  Do we really want to draw a hard line in the sand between
+90% certainty and 95% certainty?  If we're trying to decide whether to make it legal
+to sell a new drug based on clinical trials maybe we do, but researchers doing the kind
+of work we are doing rarely have to make hard "yes or no" decisions with heavy real
+world consequences, and so we should lean away from statistical tools with that
+mentality.
+
+Even if we do decide we are happy with some arbitrary threshold,
+just because we are 90% or 95% sure a coefficient is not zero, that doesn't mean it
+really matters.  The effect might be real, but very small, either in absolute terms or
+relative to the amount of variation that is still unaccounted for.  And as we discussed
+above, because there is often some non-identity link function mediating between your
+linear predictor values and the mean of your response distribution, you can't tell if
+an effect is small just by looking at the posterior mean of the coefficient and trusting
+your gut.
+
+Finally, you need to be extra careful in the case of categorical predictors, like our
+`trial_category` here.  `brms` has automatically "dummy-coded" this for us, so that the
+intercept corresponds to the first level of the variable, `clothes` (there's nothing
+special about this value at all, it's literally just the first one in the data file).
+This means that the three coefficients we see in the table correspond to the *difference*
+between the other categories and this arbitrary level.  If we check the 95% CIs for
+zero, we can see that `fruits` is "really different" from `clothes`, but `mammals` and
+`vehicles` aren't.  But this is simply a matter of perspective.  These 95% CIs don't
+reliably tell us anything about, say, how different `fruits` are from `vehicles`.
+Let's choose `vehicles` as our reference level instead of `clothes` and do the analysis
+again:
+
+```{r}
+data$target_category2 <- factor(data$target_category,
+				c("vehicles", "clothes", "fruits", "mammals"))
+
+summary(brm(correct ~ 1 + age_num + trial + target_category2 + (1 + trial | id),
+                    family=binomial(), data=data, silent=2, refresh=0,
+                    cores=4))
+```
+
+Now *all three* of the `target_category` coefficients have 95% CIs including zero!  If
+we look at *this* table, we might decide that this variable doesn't matter at all, whereas
+in the first table we at least had one coefficient which confidently excluded zero, so
+we might have decided that it did matter "at least a little bit".  It's possible that with
+yet another change to the dummy coding we might even get two CIs excluding zero.  But it's
+important to realise that we haven't actually changed our model here at all!  We've just
+played a little algebraic game with no real consequences.  Different dummy coding
+strategies make absolutely zero difference to the predictions the model makes, or the
+likelihood it assigns to any particular dataset.  Nevertheless, when simply scanning CIs
+for overlap with zero, we might come to different conclusions about how much a variable
+matters based on these differences.  Arguably, this says at least as much about how dummy
+coding isn't a very sensible thing to do in some situations as it does about how checking
+CIs for zero isn't a reliable way to assess variable importance, but the point remains
+that with categorical variables, a summary table doesn't reliably tell you what you want
+to know.  We'll see a better approach later to testing whether category matters.
+
+So, scanning a summary table for 95% CIs which exclude zero is definitely not the final
+word in interpreting what your model is saying.  That's not to say you should never do
+it.  It's quick and easy and intuitive and isn't going to give you a totally backward
+idea of what your model is saying.  You just need to be aware of limitations and nuances.
+It's a fine first step, but it should rarely be your last step.  However, the overall
+idea of checking 95% CIs for zero is much more broadly applicable than this.  You're not
+limited to just doing it with posterior distributions of model parameters, you can also
+apply it to posterior distributions of *differences* between parameters, and even to model
+predictions, and differences in predictions between conditions.  This often lets you get
+*much* more directly at the question you actually care about answering, and is one of the
+great superpowers that Bayesian inference gives you.  We'll see examples of this kind of
+thing later!
+
+With all that said: onwards and upwards to extracting predictions from a model and doing
+model comparison!  But first, sorry, we really do need to talk about priors...
 
 ## Specifying priors
 
